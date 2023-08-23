@@ -1,0 +1,235 @@
+views:
+  - title: Overview
+    type: custom:layout-card
+    layout_type: grid
+    cards:
+      - type: custom:html-template-card
+        title: ''
+        ignore_line_breaks: true
+        content: |-
+              <!DOCTYPE html>
+              <html>
+              <head>
+
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+
+              <style>
+              body {}
+              h1 { padding: 10px; border-radius: 5px; font-family:Arial, sans-serif; font-size:16px; color:white;}
+              p { font-size:14px;font-weight:normal}
+              table {margin: 10px; border:2px solid; border-radius: 5px; font-size: 14px;}
+              th, td:nth-child(even) {padding-right: 10px; padding-left: 10px; padding-top: 3px; padding-bottom: 3px; border-radius: 3px; font-size: 14px; background-color:#4f4f4f}
+              td {padding-right: 10px; padding-left: 10px; padding-top: 3px; padding-bottom: 3px; border-radius: 3px; font-size: 14px !important;}
+              textarea {padding: 10px; margin: 10px; background-color: #4f4f4f; border-radius: 5px; border:2px solid}
+
+              </style>
+
+                  {% set ns = namespace(items=[]) %}
+                  {% for med in states.sensor 
+                    | selectattr('entity_id', 'search', 'medication_')
+                    | selectattr('attributes.time', 'defined') %}
+                    {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+                    {% set nextstamp = as_timestamp(strptime(med.attributes.next | default(today), "%d.%m.%Y.")) %}
+                    {% set todaystamp = today_at("00:00") | as_timestamp | round %}
+                    {% set tomorrowstamp = (today_at("00:00") + timedelta(days=1)).timestamp() | round %}
+                    {% set every = med.attributes.every | default(1) %}
+                    {% set time = med.attributes.time %}
+                    {% set activetoday = true if (todaystamp - nextstamp)/60/60/24 % every == 0 else false %}
+                    {% set activetomorrow = true if (tomorrowstamp - nextstamp)/60/60/24 % every == 0 else false %}
+                    {% set ns.items  = (ns.items + [ {
+                      "name": med.attributes.pill_name, 
+                      "average":(med.attributes.usage | default(1))/(med.attributes.every | default(1)), 
+                      "time":med.attributes.time, 
+                      "usage":med.attributes.usage | default(1), 
+                      "every":([med.attributes.every] + [" day" if med.attributes.every == 1] + [" days" if med.attributes.every != 1]) | join, 
+                      "activetoday": activetoday, 
+                      "activetomorrow": activetomorrow}]) | sort(attribute='time', reverse=false)%}
+                  {%endfor%}
+
+                  {% set ms = namespace(items=[]) %}
+                  {% for med in states.input_number | selectattr('entity_id', 'search', 'medication_') | rejectattr('state', 'eq', "unavailable") %}
+                    {% set name = med.attributes.friendly_name %}
+                    {% set daily = ns.items | selectattr('name', 'eq', name) | map(attribute='average') | sum %}
+                    {% set count = med.state | float | round(0) %}
+                    {% set needtoday = ns.items | selectattr('name', 'eq', name) | selectattr('activetomorrow', 'eq', true) | selectattr('time', 'gt', now().strftime('%H:%M')) | map(attribute='usage') | sum %}
+                    {% set daysleft = ((count - needtoday)/daily) | round(0, "floor")  %}
+                    {% set lastday = as_timestamp(now() + timedelta( days = daysleft )) | timestamp_custom('%A, %d.%m.') %}
+                    {% set leftover = (count - needtoday - (daily*daysleft)) | round %} 
+                    {% set ms.items  = (ms.items + [{
+                      "name":name, 
+                      "count":count, 
+                      "daysleft":daysleft, 
+                      "reorder":daysleft-10, 
+                      "lastday":([lastday] + [" ( + " if leftover>0] + [leftover if leftover>0] + [" pills)" if leftover>1] + [" pill)" if leftover==1])| join()
+                      }]  ) | sort(attribute='daysleft', reverse=false) %}
+                  {%endfor%}
+
+                  {% set names = ms.items | map(attribute='name') | list  %}
+                  {% set namesactive = ms.items | selectattr('daysleft', 'lt', 16) | map(attribute='name') | list  %}
+                  {% set med_note = ([namesactive [:-1] | join(", ")] + [" & " if (namesactive | count) > 1] + [namesactive [-1:] | join()]) | join() %}
+                  {% set doc_note = med_note | replace(' & ', '\n - ') | replace(', ', '\n - ') %}
+                  {% set counts = ms.items | map(attribute='count') | list  %}
+                  {% set lastday = ms.items | map(attribute='lastday') | list  %}
+                  {% set daysleft = ms.items | map(attribute='daysleft') | list  %}
+                  {% set reorder = ms.items | map(attribute='reorder') | list  %}
+
+                  {% set justbefore = (now()-timedelta(hours=1)).strftime('%H:%M')  %}
+                  {% set nameafter = ns.items | selectattr('activetoday', 'eq', true) | selectattr('time', 'gt', justbefore) | map(attribute='name') | list  %}
+                  {% set timeafter = ns.items | selectattr('activetoday', 'eq', true) | selectattr('time', 'gt', justbefore) | map(attribute='time') | list %}
+                  {% set usageafter = ns.items | selectattr('activetoday', 'eq', true) | selectattr('time', 'gt', justbefore) | map(attribute='usage') | list  %}
+
+                  
+                  {% set nametomorrow = ns.items | selectattr('activetomorrow', 'eq', true) | map(attribute='name') | list  %}
+                  {% set timetomorrow = ns.items | selectattr('activetomorrow', 'eq', true) | map(attribute='time') | list  %}
+                  {% set usagetomorrow = ns.items | selectattr('activetomorrow', 'eq', true) | map(attribute='usage') | list  %}
+
+
+                  {% set namenext = nameafter + nametomorrow %}
+                  {% set timenext = timeafter + timetomorrow %}
+                  {% set usagenext = usageafter + usagetomorrow %}
+
+
+                  {% set nameall = ns.items | map(attribute='name') |list %}
+                  {% set timeall = ns.items | map(attribute='time') | list %}
+                  {% set usageall = ns.items | map(attribute='usage') | list %}
+                  {% set everyall = ns.items | sort(attribute='time', reverse=false) | map(attribute='every') | list %}
+
+              </head>
+
+              <body>
+
+              <h1> 
+              
+              <ha-icon icon="mdi:robot-happy-outline"></ha-icon>
+              
+              Lucky You !!!
+
+                  <p> Wherever you go, whatever you do <br><br>
+                  <ha-icon icon="mdi:airplane"></ha-icon> <ha-icon icon="mdi:train"></ha-icon> <ha-icon icon="mdi:car"></ha-icon> <ha-icon icon="mdi:beach"></ha-icon> <ha-icon icon="mdi:earth"></ha-icon>
+                  <br><br> Medication Assistant will be there for you <ha-icon icon="mdi:home-heart"></ha-icon> </p>
+
+              </h1>
+
+              <h1> 
+              <ha-icon icon="mdi:pill"></ha-icon> 
+              
+              Medication List:
+              
+                <table>
+                  <tr>
+                    <th align="right">Pill Name</th>
+                    <th>Pills Left</th>
+                    <th>Days to reorder</th>
+                    <th>Days left</th>
+                    <th>Last Day</th>
+                  </tr>
+                  <tr>
+                  <td align="right", style="white-space: nowrap">{{names | join("<br>")}}</td>
+                    <td align="center">{{counts | join("<br>")}}</td>
+                    <td align="center">{{reorder | join("<br>")}}</td>
+                    <td align="center">{{daysleft | join("<br>")}}</td>
+                    <td align="left", style="white-space: nowrap">{{lastday | join("<br>")}}</td>
+                  </tr>
+                </table>
+              </h1>
+
+              <h1>
+              <ha-icon icon="mdi:alarm"></ha-icon> Alarm List:
+              <br>
+
+              <div style="float: left">
+                  <table>
+                  <caption> Next Alarms </caption>
+                    <tr>
+                      <th align="right", style="white-space: nowrap">Pill Name</th>
+                      <th align="center"> x <ha-icon icon="mdi:pill"></ha-icon> </th>
+                      <th>Time</th>
+                    </tr>
+                    <tr>
+                      <td align="right", style="white-space: nowrap">{{nameafter | join("<br>")}}</td>
+                      <td align="center">{{usageafter | join("<br>")}}</td>
+                      <td align="center">{{timeafter | join("<br>")}}</td>
+                    </tr>
+                    <tr style="color:gray">
+                      <td align="right">Next</td>
+                      <td align="center">↕</td>
+                      <td align="center">Day</td>
+                    </tr>
+                    <tr>
+                      <td align="right">{{nametomorrow | join("<br>")}}</td>
+                      <td align="center">{{usagetomorrow | join("<br>")}}</td>
+                      <td align="center">{{timetomorrow | join("<br>")}}</td>
+                    </tr>
+                  </table>
+              </div>
+              <div align="right", style="float:left">
+                  <table >
+                  <caption>All Alarms</ha-icon></caption>
+                    <tr>
+                      <th align="right", style="white-space: nowrap">Pill Name</th>
+                      <th align="center"> x <ha-icon icon="mdi:pill"></ha-icon> </th>
+                      <th>Every</th>
+                      <th>Time</th>
+                    </tr>
+                    <tr>
+                      <td align="right">{{nameall | join("<br>")}}</td>
+                      <td align="center">{{usageall | join("<br>")}}</td>
+                      <td align="center">{{everyall | join(" <br>")}}</td>
+                      <td align="center">{{timeall | join("<br>")}}</td>
+                    </tr>
+                  </table>
+              </div>
+              <div style="clear: both;">
+              </div>
+              </h1>
+
+              <h1>
+              <ha-icon icon="mdi:email-outline"></ha-icon> e-mail Cheats:
+
+              <form action="/action_page.php">
+                <textarea rows="8" cols="50">
+              Dear doctor,
+
+              please make an order for:
+
+               - {{doc_note}}
+
+              Best Regards,
+              User</textarea>              
+              </form>
+              </h1>
+
+              <h1>
+              <div style="float: left">
+              <p>
+              Made by Tride Server <br>{{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][now().weekday()]}}, {{as_timestamp(now()) | timestamp_custom("%d.%m.%Y. %H:%M") }}
+              </p>
+              </div>
+              <div align="right", style="float:right">
+              <p>
+              Enjoy your drugs, <br> Your Medication Assistant </ha-icon>
+              </p>
+              </div>
+              <div style="clear: both;">
+              </div>
+
+              </h1>
+
+              </body>
+
+              </html>
+
+  - title: Configure
+
+    cards:
+
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: Update Number of pills left (be careful !)
+        show_empty: false
+        filter:
+          include:
+            - entity_id: input_number.medication_*
+          exclude:
+            - state: "unavailable"

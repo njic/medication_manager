@@ -1,0 +1,44 @@
+automation:
+  - alias: "medication_alarm"
+    trigger:
+      platform: time
+      at: "06:00:00"
+    action:
+      - variables:
+          alarm_list: |-
+            {% set ns = namespace(items=[]) %}
+            {% for med in states.sensor 
+              | selectattr('entity_id', 'search', 'medication_')
+              | selectattr('attributes.time', 'defined')
+              | map(attribute='attributes') %}
+              {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+              {% set next = med.next | default(today) %}
+              {% set nextstamp = as_timestamp(strptime(med.next | default(today), "%d.%m.%Y.")) %}
+              {% set every = med.every | default(1) %}
+              {% set active_in0 = true if ((today_at("00:00") + timedelta(days=0)).timestamp() - nextstamp)/60/60/24 % every == 0 else false %}
+              {% set day_in0 = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][(now() + timedelta(days=0)).weekday()] %}
+              {% set ns.items  = ns.items + [ {"name":([med.pill_name] +[" x"]+ [med.usage])|join, "usage":med.usage, "time":med.time} ] %}
+            {%endfor%}
+
+            {% set ms = namespace(items=[]) %}
+            {% set times_list  = ns.items | map(attribute='time')| unique  | list %}            
+            {% for med in times_list %}            
+              {% set time = med %}
+              {% set text = ns.items | selectattr('time', 'eq', time) | map(attribute='name') %}
+              {% set ms.items = ms.items + [{"time":time,"text":text | join(" & ")}] %}
+            {%endfor%}
+            {{ ms.items }}
+      - repeat:
+          for_each: "{{ alarm_list }}"
+          sequence:
+            - variables:
+                alarm_time_h: "{{ (repeat.item.time [0:2]) }}"
+                alarm_time_m: "{{ (repeat.item.time [3:5]) }}"
+            - service: notify.mobile_app_moto_g42
+              data:
+                message: command_activity
+                data:
+                  intent_action: android.intent.action.SET_ALARM
+                  intent_extras: "android.intent.extra.alarm.HOUR:{{alarm_time_h}},android.intent.extra.alarm.MINUTES:{{alarm_time_m}},android.intent.extra.alarm.MESSAGE:{{repeat.item.text}},android.intent.extra.alarm.DAYS:3,android.intent.extra.alarm.SKIP_UI:true"
+            - delay: "00:00:05"
+    mode: single

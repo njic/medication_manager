@@ -1,0 +1,18 @@
+input_number:
+  medication_example_onceaday:
+    icon: mdi:pill
+    name: "example onceaday"
+    mode: box
+    step: 1
+    min: -30
+    max: 1000
+
+template:
+  sensor:
+    - unique_id: medication_example_onceaday:_med1
+      name: "medication_example_onceaday_med1"
+      state: ""
+      attributes:
+        counter: "input_number.medication_example_onceaday"
+        pill_name: "example onceaday"    
+        time: "07:45"

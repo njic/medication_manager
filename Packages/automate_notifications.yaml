@@ -1,0 +1,50 @@
+automation:
+  - alias: "medication_decounter"
+    trigger:
+      platform: template
+      value_template: |-
+            {% set ns = namespace(items=[]) %}
+            {% for med in states.sensor
+              | selectattr('entity_id', 'search', 'medication_')
+              | selectattr('attributes.time', 'defined') 
+              | selectattr('attributes.time', 'eq', now().strftime('%H:%M'))
+              | list %}
+              {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+              {% set nextstamp = as_timestamp(strptime(med.attributes.next | default(today), "%d.%m.%Y.")) %}
+              {% set todaystamp = today_at("00:00") | as_timestamp %}
+              {% set every = med.attributes.every | default(1) %}
+              {% set time = med.attributes.time %}
+                {% if (todaystamp - nextstamp)/60/60/24 % every == 0 %}
+                  {% set ns.items  = ns.items + [time] %}
+                {%endif%}
+            {%endfor%}
+            {{ now().strftime('%H:%M') in ns.items}}
+    action:
+      - variables:
+          med_note: |-
+            {% set ns = namespace(items=[]) %}
+            {% for med in states.sensor 
+              | selectattr('entity_id', 'search', 'medication_')
+              | selectattr('attributes.time', 'defined')
+              | selectattr('attributes.time', 'eq', now().strftime('%H:%M') )
+              | map(attribute='attributes') | list%}
+              {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+              {% set next = med.next | default(today) %}
+              {% set usage = med.usage | default(0) %}
+              {% set every = med.every | default(1) %}
+              {% set nextstamp = as_timestamp(strptime(next, "%d.%m.%Y.")) %}
+              {% set todaystamp = today_at("00:00") | as_timestamp %}
+                {% if (todaystamp - nextstamp)/60/60/24 % every == 0 %}
+                  {% set ns.items = (ns.items + [med.pill_name] + [" x"] + [usage] + [", "]) %}
+                {%endif%}
+            {%endfor%}
+            {% set itemcount = ns.items | count %}
+            {{ ns.items [0:-5] | join}}{{" &" if itemcount > 4}} {{ ns.items [-4:-1] | join()}} at {{now().strftime('%H:%M')}}
+      - service: notify.mobile_app_moto_g42
+        data:
+          title: "It's time to take your medication"
+          message: "Take {{med_note}}"
+          data:
+            ttl: 0
+            priority: high
+    mode: single

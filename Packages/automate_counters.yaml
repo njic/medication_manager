@@ -1,0 +1,50 @@
+automation:
+  - alias: "medication_decounter"
+    trigger:
+      platform: template
+      value_template: |-
+            {% set ns = namespace(items=[]) %}
+            {% for med in states.sensor
+              | selectattr('entity_id', 'search', 'medication_')
+              | selectattr('attributes.time', 'defined') 
+              | selectattr('attributes.time', 'eq', now().strftime('%H:%M'))
+              | list %}
+              {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+              {% set nextstamp = as_timestamp(strptime(med.attributes.next | default(today), "%d.%m.%Y.")) %}
+              {% set todaystamp = today_at("00:00") | as_timestamp %}
+              {% set every = med.attributes.every | default(1) %}
+              {% set time = med.attributes.time %}
+                {% if (todaystamp - nextstamp)/60/60/24 % every == 0 %}
+                  {% set ns.items  = ns.items + [time] %}
+                {%endif%}
+            {%endfor%}
+            {{ now().strftime('%H:%M') in ns.items}}
+    action:
+      - variables:
+          dict_list: |-
+            {% set ns = namespace(items=[]) %}
+            {% for med in states.sensor
+              | selectattr('entity_id', 'search', 'medication_')
+              | selectattr('attributes.time', 'defined')
+              | selectattr('attributes.time', 'eq', now().strftime('%H:%M')) %}
+              {% set today = now().timestamp() | timestamp_custom("%d.%m.%Y.") %}
+              {% set next = med.attributes.next | default(today) %}
+              {% set nextstamp = as_timestamp(strptime(med.attributes.next | default(today), "%d.%m.%Y.")) %}
+              {% set todaystamp = today_at("00:00") | as_timestamp %}
+              {% set every = med.attributes.every | default(1) %}
+                {% if (todaystamp - nextstamp)/60/60/24 % every == 0 %}
+                  {% set ns.items  = ns.items + [ {"usage":med.attributes.usage | default(1), "counter": med.attributes.counter} ] %}
+                {%endif%}
+            {%endfor%}
+            {{ns.items}}
+      - repeat:
+          for_each: "{{ dict_list }}"
+          sequence:
+            - variables:
+                current: "{{ states(repeat.item.counter) | int(0) }}"
+            - service: input_number.set_value
+              target:
+                entity_id: "{{ repeat.item.counter }}"
+              data:
+                value: "{{ current - repeat.item.usage | int(0) }}"
+    mode: single
